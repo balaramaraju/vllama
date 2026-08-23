@@ -46,8 +46,6 @@ class GenericStreamingDataset(IterableDataset):
 
 
 def build_distributed_dataloader(dataset, batch_size: int):
-    # CRITICAL: We DO NOT use a DistributedSampler here for an IterableDataset.
-    # split_dataset_by_node handles the workload distribution.
     dataloader = DataLoader(
         dataset,
         batch_size=batch_size,
