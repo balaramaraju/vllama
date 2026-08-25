@@ -52,12 +52,17 @@ class FSDP2Train:
         optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
         tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-1B")
 
+        # Error: HTTP Error 429 "Too Many Requests" thrown by Hugging Face Hub API.
+        # Reason: Multiple distributed GPU nodes hit the same gateway IP address simultaneously, triggering rate-limit security walls.
+        # We are testing RunPod , following changes are temporay for testing fsdp training.
+
         dataset = GenericStreamingDataset(
-            hf_path="HuggingFaceFW/fineweb-edu",
+            hf_path="./fineweb_sample_5k.jsonl",
             hf_name="sample-10BT",
             split="train",
             block_size=128,
-            tokenizer=tokenizer
+            tokenizer=tokenizer,
+            is_local_file=True
         )
         dataloader = build_distributed_dataloader(dataset=dataset, batch_size=2)
 
