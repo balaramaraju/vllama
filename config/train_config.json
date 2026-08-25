@@ -1,0 +1,32 @@
+{
+  "training_data": {
+    "hf_path": "./fineweb_sample_5k.jsonl",
+    "hf_name": null,
+    "split": "train",
+    "block_size": 128,
+    "batch_size": 2,
+    "is_local_file": true
+  },
+  "config": {
+    "model": {
+      "vocab_size": 128256,
+      "n_embd": 1536,
+      "n_blocks": 16,
+      "n_heads": 24,
+      "n_kv_heads": 8,
+      "max_seq_len": 2048
+    },
+    "optimizer": {
+      "lr": 0.001
+    },
+    "profile": {
+      "skip_first": 10,
+      "wait": 5,
+      "warmup": 2,
+      "active": 5,
+      "repeat": 1,
+      "max_steps": 25,
+      "trace_dir": "./log/fsdp_profile"
+    }
+  }
+}

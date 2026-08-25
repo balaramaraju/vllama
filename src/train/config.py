@@ -1,0 +1,99 @@
+import json
+import os
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional
+
+from src.model.config import LlamaConfig
+
+DEFAULT_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "config", "train_config.json")
+
+
+@dataclass
+class TrainingDataConfig:
+    """Dataset / dataloader parameters from the ``training_data`` JSON section."""
+
+    hf_path: str = "./fineweb_sample_5k.jsonl"
+    hf_name: Optional[str] = None
+    split: str = "train"
+    block_size: int = 128
+    batch_size: int = 2
+    is_local_file: bool = True
+
+
+@dataclass
+class OptimizerConfig:
+    """Optimizer parameters from the ``config.optimizer`` JSON section."""
+
+    lr: float = 1e-3
+
+
+@dataclass
+class ProfileConfig:
+    """Profiler parameters from the ``config.profile`` JSON section."""
+
+    skip_first: int = 10
+    wait: int = 5
+    warmup: int = 2
+    active: int = 5
+    repeat: int = 1
+    max_steps: int = 25
+    trace_dir: str = "./log/fsdp_profile"
+
+
+@dataclass
+class TrainConfig:
+    """Top-level training configuration loaded from the JSON file."""
+
+    training_data: TrainingDataConfig = field(default_factory=TrainingDataConfig)
+    model: LlamaConfig = field(default_factory=LlamaConfig)
+    optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
+    profile: ProfileConfig = field(default_factory=ProfileConfig)
+
+
+def load_train_config(path: str = DEFAULT_CONFIG_PATH) -> TrainConfig:
+    """Load and parse the training configuration JSON into a :class:`TrainConfig`."""
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Training config file missing at {path}")
+
+    with open(path, "r", encoding="utf-8") as f:
+        data: Dict[str, Any] = json.load(f)
+
+    if "training_data" not in data or "config" not in data:
+        raise ValueError(
+            f"Training config at {path} must contain both 'training_data' and 'config' sections."
+        )
+
+    td = data["training_data"]
+    training_data = TrainingDataConfig(
+        hf_path=td.get("hf_path", TrainingDataConfig.hf_path),
+        hf_name=td.get("hf_name", TrainingDataConfig.hf_name),
+        split=td.get("split", TrainingDataConfig.split),
+        block_size=td.get("block_size", TrainingDataConfig.block_size),
+        batch_size=td.get("batch_size", TrainingDataConfig.batch_size),
+        is_local_file=td.get("is_local_file", TrainingDataConfig.is_local_file),
+    )
+
+    cfg = data["config"]
+    model_section = cfg.get("model", {})
+    model = LlamaConfig(**model_section)
+
+    opt = cfg.get("optimizer", {})
+    optimizer = OptimizerConfig(lr=opt.get("lr", OptimizerConfig.lr))
+
+    prof = cfg.get("profile", {})
+    profile = ProfileConfig(
+        skip_first=prof.get("skip_first", ProfileConfig.skip_first),
+        wait=prof.get("wait", ProfileConfig.wait),
+        warmup=prof.get("warmup", ProfileConfig.warmup),
+        active=prof.get("active", ProfileConfig.active),
+        repeat=prof.get("repeat", ProfileConfig.repeat),
+        max_steps=prof.get("max_steps", ProfileConfig.max_steps),
+        trace_dir=prof.get("trace_dir", ProfileConfig.trace_dir),
+    )
+
+    return TrainConfig(
+        training_data=training_data,
+        model=model,
+        optimizer=optimizer,
+        profile=profile,
+    )
