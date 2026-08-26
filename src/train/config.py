@@ -18,6 +18,7 @@ class TrainingDataConfig:
     block_size: int = 128
     batch_size: int = 2
     is_local_file: bool = True
+    tokenizer_path: str = "./llama_tokenizer_local"
 
 
 @dataclass
@@ -25,6 +26,25 @@ class OptimizerConfig:
     """Optimizer parameters from the ``config.optimizer`` JSON section."""
 
     lr: float = 1e-3
+
+
+@dataclass
+class TrainingConfig:
+    """Training-loop control parameters from the ``config.training`` JSON section."""
+
+    max_steps: int = -1  # -1 = run until the dataset is exhausted
+    log_every: int = 1
+
+
+@dataclass
+class CheckpointConfig:
+    """Distributed checkpoint (DCP) save / resume parameters."""
+
+    checkpoint_dir: str = "./checkpoints/llama_3b"
+    resume: bool = True             # auto-resume the latest step_* under checkpoint_dir
+    load_from: Optional[str] = None  # explicit step dir; overrides `resume`
+    save_every: int = 50
+    save_final: bool = True
 
 
 @dataclass
@@ -47,6 +67,8 @@ class TrainConfig:
     training_data: TrainingDataConfig = field(default_factory=TrainingDataConfig)
     model: LlamaConfig = field(default_factory=LlamaConfig)
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
+    training: TrainingConfig = field(default_factory=TrainingConfig)
+    checkpoint: CheckpointConfig = field(default_factory=CheckpointConfig)
     profile: ProfileConfig = field(default_factory=ProfileConfig)
 
 
@@ -71,6 +93,7 @@ def load_train_config(path: str = DEFAULT_CONFIG_PATH) -> TrainConfig:
         block_size=td.get("block_size", TrainingDataConfig.block_size),
         batch_size=td.get("batch_size", TrainingDataConfig.batch_size),
         is_local_file=td.get("is_local_file", TrainingDataConfig.is_local_file),
+        tokenizer_path=td.get("tokenizer_path", TrainingDataConfig.tokenizer_path),
     )
 
     cfg = data["config"]
@@ -79,6 +102,21 @@ def load_train_config(path: str = DEFAULT_CONFIG_PATH) -> TrainConfig:
 
     opt = cfg.get("optimizer", {})
     optimizer = OptimizerConfig(lr=opt.get("lr", OptimizerConfig.lr))
+
+    train = cfg.get("training", {})
+    training = TrainingConfig(
+        max_steps=train.get("max_steps", TrainingConfig.max_steps),
+        log_every=train.get("log_every", TrainingConfig.log_every),
+    )
+
+    ckpt = cfg.get("checkpoint", {})
+    checkpoint = CheckpointConfig(
+        checkpoint_dir=ckpt.get("checkpoint_dir", CheckpointConfig.checkpoint_dir),
+        resume=ckpt.get("resume", CheckpointConfig.resume),
+        load_from=ckpt.get("load_from", CheckpointConfig.load_from),
+        save_every=ckpt.get("save_every", CheckpointConfig.save_every),
+        save_final=ckpt.get("save_final", CheckpointConfig.save_final),
+    )
 
     prof = cfg.get("profile", {})
     profile = ProfileConfig(
@@ -95,5 +133,7 @@ def load_train_config(path: str = DEFAULT_CONFIG_PATH) -> TrainConfig:
         training_data=training_data,
         model=model,
         optimizer=optimizer,
+        training=training,
+        checkpoint=checkpoint,
         profile=profile,
     )

@@ -6,10 +6,11 @@ import os
 import json
 import torch.distributed as dist
 import torch.multiprocessing as mp
+from typing import Optional
 from transformers import AutoTokenizer
 
 class GenericStreamingDataset(IterableDataset):
-    def __init__(self, hf_path: str, hf_name: str, split: str, block_size: int, tokenizer, is_local_file: bool = False):
+    def __init__(self, hf_path: str, hf_name: Optional[str], split: str, block_size: int, tokenizer, is_local_file: bool = False):
         self.hf_path = hf_path
         self.hf_name = hf_name
         self.split = split
@@ -34,7 +35,7 @@ class GenericStreamingDataset(IterableDataset):
                 world_size = dist.get_world_size()
                 raw_stream = raw_stream[rank::world_size]
         else:
-            # Open the stream from Hugging Face (Zero download wait, zero high RAM use)
+            # Hugging Face streaming dataset (no download, low RAM).
             print(f"Opening live stream for {self.hf_path} on process rank {dist.get_rank() if dist.is_initialized() else 0}...")
             raw_stream = load_dataset(self.hf_path, name=self.hf_name, split=self.split, streaming=True)
             
@@ -67,9 +68,9 @@ def build_distributed_dataloader(dataset, batch_size: int):
     dataloader = DataLoader(
         dataset,
         batch_size=batch_size,
-        num_workers=0,    # Set to 0 for simple local CPU testing to prevent deadlocks
-        pin_memory=False,  # Set to False for local CPU simulation
-        drop_last=True     # Drops uneven trailing batches across processes
+        num_workers=0,     # no worker processes (avoids distributed rank deadlocks)
+        pin_memory=False,
+        drop_last=True     # drops uneven trailing batches across processes
     )
     return dataloader
 

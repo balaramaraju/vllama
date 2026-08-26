@@ -206,6 +206,13 @@ tempCodeRunnerFile.py
 # Ruff stuff:
 .ruff_cache/
 
+# vllama runtime artifacts
+checkpoints/
+llama_tokenizer_local/
+fineweb_sample_5k.jsonl
+log/
+config/local_test_config.json
+
 # PyPI configuration file
 .pypirc
 

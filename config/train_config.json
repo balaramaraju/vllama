@@ -19,6 +19,17 @@
     "optimizer": {
       "lr": 0.001
     },
+    "training": {
+      "max_steps": 10000,
+      "log_every": 1
+    },
+    "checkpoint": {
+      "checkpoint_dir": "./checkpoints/llama_3b",
+      "resume": true,
+      "load_from": null,
+      "save_every": 50,
+      "save_final": true
+    },
     "profile": {
       "skip_first": 10,
       "wait": 5,

@@ -64,10 +64,13 @@ class SimpleRoPE(nn.Module):
         super().__init__()
         self.dim = dim
         inv_freq = 1.0 / (theta ** (torch.arange(0, dim, 2).float() / dim))
+        self.inv_freq: torch.Tensor
         self.register_buffer("inv_freq", inv_freq, persistent=False)
         t = torch.arange(max_seq_len, dtype=torch.float32)
         freqs = torch.outer(t, self.inv_freq)
         emb = torch.cat((freqs, freqs), dim=-1)
+        self.cos_cached: torch.Tensor
+        self.sin_cached: torch.Tensor
         self.register_buffer("cos_cached", emb.cos(), persistent=False)
         self.register_buffer("sin_cached", emb.sin(), persistent=False)
 
