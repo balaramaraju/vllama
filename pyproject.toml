@@ -30,3 +30,7 @@ where = ["."]
 include = ["src*"]
 exclude = ["src*tests*"]
 
+[tool.pyright]
+extraPaths = ["."]
+
+
