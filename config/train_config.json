@@ -10,8 +10,8 @@
   "config": {
     "model": {
       "vocab_size": 128256,
-      "n_embd": 1536,
-      "n_blocks": 16,
+      "n_embd": 3072,
+      "n_blocks": 28,
       "n_heads": 24,
       "n_kv_heads": 8,
       "max_seq_len": 2048
