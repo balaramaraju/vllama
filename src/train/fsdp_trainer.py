@@ -5,7 +5,6 @@ import torch.distributed as dist
 from torch.distributed.device_mesh import init_device_mesh
 from torch.distributed.fsdp import fully_shard
 from torch.profiler import ProfilerActivity, profile, record_function, schedule
-from typing import cast
 from transformers import AutoTokenizer
 
 from src.datautils.distributed_checkpoint_manager import DistributedCheckpointManager
@@ -46,8 +45,13 @@ class FSDP2Trainer:
         device_type = "cuda" if self.isCuda else "cpu"
         mesh = init_device_mesh(device_type, (self.world_size,))
         
-        model = Llama(config=self.config).to(self.device)
-        
+        # bf16 model params on CUDA so AdamW tiers are allocated in bf16, shrinking
+        # both VRAM and the on-disk optimizer state.
+        if self.isCuda:
+            model = Llama(config=self.config).to(self.device).bfloat16()
+        else:
+            model = Llama(config=self.config).to(self.device)
+
         embedding_attr = "embedding" if hasattr(model, "embedding") else "tok_embeddings"
         embed_module = getattr(model, embedding_attr, None)
         if (
@@ -65,21 +69,21 @@ class FSDP2Trainer:
         for llamaBlock in model.blocks:
             fully_shard(llamaBlock, mesh=mesh)
         fully_shard(model, mesh=mesh)
-        
-        lr = self.cfg.optimizer.lr
-        optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
 
-        # Pre-compile module kept for all checkpoint IO.
+        lr = self.cfg.optimizer.lr
+        optimizer = torch.optim.AdamW(
+            model.parameters(),
+            lr=lr,
+            capturable=True if self.isCuda else False,
+        )
+
         self.raw_model = model
         self.optimizer = optimizer
-        self.checkpoint_manager = DistributedCheckpointManager(self.raw_model, self.optimizer)
+        self.checkpoint_manager = DistributedCheckpointManager(
+            self.raw_model, self.optimizer, local_rank=self.local_rank
+        )
 
         self._load_checkpoint_if_needed()
-
-        if self.isCuda:
-            model = cast(torch.nn.Module, torch.compile(model, mode="reduce-overhead"))
-            if self.rank == 0:
-                print("🚀 Graph compiled safely AFTER distributed sharding topologies.")
 
         td = self.cfg.training_data
         tokenizer = AutoTokenizer.from_pretrained(td.tokenizer_path)

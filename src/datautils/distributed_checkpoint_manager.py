@@ -7,21 +7,35 @@ from torch.distributed.checkpoint.state_dict_loader import load
 from torch.distributed.checkpoint.filesystem import FileSystemReader, FileSystemWriter
 
 class DistributedCheckpointManager:
-    def __init__(self, model, optimizer):
-        """Checkpoint Manager using PyTorch Distributed Checkpoint (DCP)."""
+    def __init__(self, model, optimizer, local_rank: int = 0):
+        """Checkpoint Manager using PyTorch Distributed Checkpoint (DCP).
+
+        Tracks the local device rank so cross-GPU synchronization barriers can be
+        issued against the correct device, preventing distributed freezes.
+        """
         self.model = model
         self.optimizer = optimizer
+        self.local_rank = local_rank
+
+    def _sync(self):
+        """Barrier across ranks. `device_ids` is NCCL-only, so it is skipped on gloo/CPU."""
+        if torch.cuda.is_available() and dist.is_initialized():
+            dist.barrier(device_ids=[self.local_rank])
+        elif dist.is_initialized():
+            dist.barrier()
 
     def save_checkpoint(self, checkpoint_root: str, step: int):
-        """Dump sharded model + optimizer weights to disk from all GPUs in parallel."""
+        """Dump sharded state weights and optimizer tracks to disk in parallel from all GPUs."""
         step_dir = os.path.join(checkpoint_root, f"step_{step:07d}")
+
         if dist.get_rank() == 0:
             os.makedirs(step_dir, exist_ok=True)
 
-        # All ranks wait until the directory layer is created before writing.
-        dist.barrier()
+        # All ranks wait until the directory metadata layer exists before writing.
+        self._sync()
 
-        # Sharded (DTensor) state dicts; reshardable to a different mesh on load.
+        # FSDP2 get_state_dict already yields SHARDED (DTensor) state dicts, so no
+        # duplicate full-size weight dumps occur across ranks.
         model_state, optim_state = get_state_dict(self.model, self.optimizer)
         state_dict = {
             "model": model_state,
@@ -30,11 +44,14 @@ class DistributedCheckpointManager:
 
         save(state_dict=state_dict, storage_writer=FileSystemWriter(step_dir))
 
+        # Clear network channels after the heavy parallel write.
+        self._sync()
+
         if dist.get_rank() == 0:
             print(f"💾 Distributed parallel DCP state successfully written to: {step_dir}")
 
     def load_checkpoint(self, step_dir: str):
-        """Load sharded weights back into the current device mesh."""
+        """Load sharded parameter shards back into the active distributed device mesh layers."""
         if not os.path.exists(step_dir):
             raise FileNotFoundError(f"Target distributed checkpoint directory missing at: {step_dir}")
 

@@ -21,13 +21,13 @@
     },
     "training": {
       "max_steps": 10000,
-      "log_every": 1
+      "log_every": 10
     },
     "checkpoint": {
       "checkpoint_dir": "./checkpoints/llama_3b",
       "resume": true,
       "load_from": null,
-      "save_every": 50,
+      "save_every": 1000,
       "save_final": true
     },
     "profile": {
