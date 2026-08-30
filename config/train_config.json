@@ -1,6 +1,6 @@
 {
   "training_data": {
-    "hf_path": "HuggingFaceFW/fineweb",
+    "hf_path": null,
     "hf_name": null,
     "split": "train",
     "block_size": 2048,
