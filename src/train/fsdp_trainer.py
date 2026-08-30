@@ -95,6 +95,11 @@ class FSDP2Trainer:
             block_size=td.block_size,
             tokenizer=tokenizer,
             is_local_file=td.is_local_file,
+            wait_for_data=td.wait_for_data,
+            poll_interval=td.poll_interval,
+            source_mode=td.source_mode,
+            data_dir=td.data_dir,
+            delete_consumed=td.delete_consumed,
         )
         dataloader = build_distributed_dataloader(dataset=dataset, batch_size=td.batch_size)
 
@@ -142,6 +147,34 @@ class FSDP2Trainer:
     def _save_distributed_checkpoint(self, step: int):
         """Dump sharded weights + optimizer state across all GPUs in parallel."""
         self.checkpoint_manager.save_checkpoint(self.checkpoint_root, step=step)
+        self._prune_checkpoints()
+
+    def _prune_checkpoints(self):
+        """Keep only the newest ``keep_last`` step_* checkpoints (rank 0 only).
+
+        Deletes only directories matching ``step_<digits>`` under the checkpoint
+        root; never touches the root itself. A barrier keeps all ranks aligned
+        after the deletion.
+        """
+        keep = self.cfg.checkpoint.keep_last
+        if keep < 0 or not os.path.isdir(self.checkpoint_root) or self.rank != 0:
+            return
+
+        step_dirs: list[tuple[int, str]] = []
+        for entry in os.listdir(self.checkpoint_root):
+            if entry.startswith("step_"):
+                suffix = entry[len("step_"):]
+                full = os.path.join(self.checkpoint_root, entry)
+                if suffix.isdigit() and os.path.isdir(full):
+                    step_dirs.append((int(suffix), full))
+        step_dirs.sort(reverse=True)
+
+        for _, old_dir in step_dirs[keep:]:
+            print(f"🧹 Pruning old checkpoint: {old_dir}")
+            dist.barrier()
+            import shutil
+            shutil.rmtree(old_dir, ignore_errors=True)
+            dist.barrier()
 
     def _forward(self, x, y):
         if self.device.type == "cuda":

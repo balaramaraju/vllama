@@ -1,11 +1,17 @@
 {
   "training_data": {
-    "hf_path": "./fineweb_sample_5k.jsonl",
+    "hf_path": "HuggingFaceFW/fineweb",
     "hf_name": null,
     "split": "train",
-    "block_size": 128,
-    "batch_size": 2,
-    "is_local_file": true
+    "block_size": 2048,
+    "batch_size": 8,
+    "is_local_file": true,
+    "tokenizer_path": "./llama_tokenizer_local",
+    "wait_for_data": true,
+    "poll_interval": 1.0,
+    "source_mode": "shard_dir",
+    "data_dir": "./training_data/fineweb",
+    "delete_consumed": true
   },
   "config": {
     "model": {
@@ -17,7 +23,7 @@
       "max_seq_len": 2048
     },
     "optimizer": {
-      "lr": 0.001
+      "lr": 0.0003
     },
     "training": {
       "max_steps": 10000,
@@ -28,7 +34,8 @@
       "resume": true,
       "load_from": null,
       "save_every": 1000,
-      "save_final": true
+      "save_final": true,
+      "keep_last": 2
     },
     "profile": {
       "skip_first": 10,

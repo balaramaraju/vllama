@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional
+from torch.utils.checkpoint import checkpoint
 
 class LlamaGroupAttention(nn.Module):
     def __init__(self, config):
@@ -113,6 +114,7 @@ class SwiGLUMLP(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
+
 class Llama(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -129,10 +131,29 @@ class Llama(nn.Module):
         
         mask = torch.full((seq_len, seq_len), float("-inf"), device=tokens.device)
         mask = torch.triu(mask, diagonal=1)
-        
+
+        # ---------------------------------------------------------------------
+        # PERFORMANCE OPTIMIZATION: ACTIVATION CHECKPOINT
+        # Converts keyword parameters to clean positional arguments to satisfy
+        # the use_reentrant=False non-reentrant FSDP2 graph constraint.
+        # ---------------------------------------------------------------------
+        def create_checkpoint_forward(block_layer):
+            def custom_forward(tensor_state, attention_mask):
+                # Unpacks safely inside the localized block frame
+                return block_layer(tensor_state, mask=attention_mask)
+            return custom_forward
+
         for block in self.blocks:
-            x = block(x, mask=mask)
-            
+            # Drop intermediate activations (SwiGLU, QKV dots) during forward pass;
+            # force on-the-fly recomputation during the backward graph step.
+            x = checkpoint(
+                create_checkpoint_forward(block),
+                x,
+                mask,
+                use_reentrant=False  # Mandatory for FSDP2 tracking integration
+            )
+        # ---------------------------------------------------------------------
+
         x = self.norm(x)
         logits = self.output(x)
         

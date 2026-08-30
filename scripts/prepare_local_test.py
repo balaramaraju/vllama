@@ -77,6 +77,8 @@ def build_config() -> None:
             "batch_size": 2,
             "is_local_file": True,
             "tokenizer_path": "./llama_tokenizer_local",
+            "wait_for_data": True,
+            "poll_interval": 0.1,
         },
         "config": {
             "model": {
@@ -95,6 +97,7 @@ def build_config() -> None:
                 "load_from": None,
                 "save_every": 2,
                 "save_final": True,
+                "keep_last": 2,
             },
             "profile": {
                 "skip_first": 1,

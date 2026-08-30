@@ -19,6 +19,11 @@ class TrainingDataConfig:
     batch_size: int = 2
     is_local_file: bool = True
     tokenizer_path: str = "./llama_tokenizer_local"
+    wait_for_data: bool = True            # poll for the JSONL file if it doesn't exist yet
+    poll_interval: float = 1.0            # seconds between file-growth polls in tail mode
+    source_mode: str = "file"             # "file" | "shard_dir" | "hf"
+    data_dir: Optional[str] = "./training_data/fineweb"
+    delete_consumed: bool = True          # delete dataset shards once all ranks finish them
 
 
 @dataclass
@@ -45,6 +50,7 @@ class CheckpointConfig:
     load_from: Optional[str] = None  # explicit step dir; overrides `resume`
     save_every: int = 50
     save_final: bool = True
+    keep_last: int = 2              # retain only the most recent N step_* checkpoints
 
 
 @dataclass
@@ -94,6 +100,11 @@ def load_train_config(path: str = DEFAULT_CONFIG_PATH) -> TrainConfig:
         batch_size=td.get("batch_size", TrainingDataConfig.batch_size),
         is_local_file=td.get("is_local_file", TrainingDataConfig.is_local_file),
         tokenizer_path=td.get("tokenizer_path", TrainingDataConfig.tokenizer_path),
+        wait_for_data=td.get("wait_for_data", TrainingDataConfig.wait_for_data),
+        poll_interval=td.get("poll_interval", TrainingDataConfig.poll_interval),
+        source_mode=td.get("source_mode", TrainingDataConfig.source_mode),
+        data_dir=td.get("data_dir", TrainingDataConfig.data_dir),
+        delete_consumed=td.get("delete_consumed", TrainingDataConfig.delete_consumed),
     )
 
     cfg = data["config"]
@@ -116,6 +127,7 @@ def load_train_config(path: str = DEFAULT_CONFIG_PATH) -> TrainConfig:
         load_from=ckpt.get("load_from", CheckpointConfig.load_from),
         save_every=ckpt.get("save_every", CheckpointConfig.save_every),
         save_final=ckpt.get("save_final", CheckpointConfig.save_final),
+        keep_last=ckpt.get("keep_last", CheckpointConfig.keep_last),
     )
 
     prof = cfg.get("profile", {})
