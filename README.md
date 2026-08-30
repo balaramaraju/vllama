@@ -49,40 +49,38 @@ bash scripts/setup_runpod.sh
 
 ### 4. Launch training (data downloads in parallel)
 
-**Primary command — full FineWeb streamed, sliding-window:**
+**Single entry point — `scripts/run.sh` handles both training-only and train+download:**
 
 ```bash
-NPROC=4 bash scripts/run_parallel.sh
+# Train with existing data (no downloader):
+NPROC=4 bash scripts/run.sh
+
+# Train + download in parallel (full FineWeb):
+NPROC=4 DATASET=HuggingFaceFW/fineweb bash scripts/run.sh
+
+# A subset instead of the full 1TB FineWeb:
+DATASET=HuggingFaceFW/fineweb CONFIG_NAME=sample-10BT NPROC=4 bash scripts/run.sh
+
+# Long-running: full dataset, custom buffer caps:
+MAX_BUF_GB=3 RESUME_BUF_GB=2 CHUNK_MB=50 NPROC=4 bash scripts/run.sh
+
+# Performance flags:
+COMPILE=1 ACCUMULATE=2 NO_ACTIVATION_CKPT=1 NPROC=4 bash scripts/run.sh
 ```
 
-What this does:
-1. Starts the **HF downloader in the background**: streams `HuggingFaceFW/fineweb`
+What `run.sh` does:
+1. If chunks (`chunk_*.jsonl`) already exist under `DATA_DIR`, **skips download** and launches training directly.
+2. Otherwise, starts the **HF downloader in the background**: streams `HuggingFaceFW/fineweb`
    (full dataset) into `./training_data/fineweb/chunk_*.jsonl` (~50 MB each),
    pausing when the folder exceeds **3 GB** and resuming once training cleans it
    back down to **2 GB**.
-2. Launches `torchrun` training immediately (4 processes). Training begins as soon
+3. Launches `torchrun` training immediately (4 processes). Training begins as soon
    as the first chunk lands, consumes chunks **in order**, and **deletes each shard
    once all GPUs are done with it**.
-3. When the downloader finishes (or is Ctrl-C'd), the script waits for it and exits.
-
-Custom data source:
-```bash
-# A subset instead of the full 1TB FineWeb
-DATASET=HuggingFaceFW/fineweb CONFIG_NAME=sample-10BT \
-NPROC=4 bash scripts/run_parallel.sh
-
-# Long-running: just stream the full dataset, cap buffer
-MAX_BUF_GB=3 RESUME_BUF_GB=2 CHUNK_MB=50 NPROC=4 bash scripts/run_parallel.sh
-```
-
-**Run with pre-downloaded data only** (no downloader):
-
-```bash
-NPROC=4 bash scripts/run_train.sh
-```
+4. When the downloader finishes (or is Ctrl-C'd), the script waits for it and exits.
 
 ### 5. Monitor + resume
-- Progress prints each `Step NNNN | Step Loss: x.xxxx` (log_every) on rank 0.
+- Progress prints each `Step NNNN | Loss: x.xxxx | Time: NNNms | Peak VRAM: NNNNMB` (log_every) on rank 0.
 - Checkpoints are saved under `./checkpoints/llama_3b/step_%07d/` every `save_every`
   steps; only the newest `keep_last` (default **2**) are retained.
 - **To resume** (e.g. after a pod restart), just re-run the same launch command:
@@ -102,8 +100,8 @@ All settings live in `config/train_config.json`:
     "hf_path": "HuggingFaceFW/fineweb",
     "config": null,                // dataset config; null = full dataset
     "split": "train",
-    "block_size": 2048,            // tokens per sequence
-    "batch_size": 8,               // sequences per step
+    "block_size": 4096,            // tokens per sequence
+    "batch_size": 16,               // sequences per step
     "is_local_file": true,         // true = read local chunk files
     "tokenizer_path": "./llama_tokenizer_local",
     "wait_for_data": true,         // poll for file/chunks instead of failing
@@ -177,9 +175,8 @@ python src/train/fsdp_train.py --config config/local_test_config.json   # resume
 config/train_config.json         # main 3B training config
 config/local_test_config.json    # tiny CPU test config (generated)
 scripts/
-  run_parallel.sh                # download + train in parallel
-  run_train.sh                   # train only
-  setup_runpod.sh                # tokenizer + seed data
+  run.sh                           # single entry: train-only + train+download
+  setup_runpod.sh                  # tokenizer + seed data
   prepare_local_test.py          # offline smoke-test assets
 src/
   train/fsdp_trainer.py          # FSDP2 trainer

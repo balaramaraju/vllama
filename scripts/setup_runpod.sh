@@ -66,4 +66,4 @@ print(f"    Wrote synthetic sample data to {out}")
 PY
 fi
 
-echo "==> OK. Next: bash scripts/run_train.sh"
+echo "==> OK. Next: bash scripts/run.sh"

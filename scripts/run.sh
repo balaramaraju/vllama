@@ -6,9 +6,16 @@
 # tailing when the downloader writes the `.done` marker.
 #
 # Usage:
-#   NPROC=4 CONFIG=config/train_config.json \
-#   DATASET=HuggingFaceFW/fineweb-edu CONFIG_NAME=sample-10BT NUM_ROWS=5000 \
-#   bash scripts/run_parallel.sh
+#   # Train with existing data:
+#   NPROC=4 bash scripts/run.sh
+#
+#   # Train + download in parallel:
+#   DATASET=HuggingFaceFW/fineweb NPROC=4 bash scripts/run.sh
+#
+#   # All performance flags:
+#   COMPILE=1 ACCUMULATE=2 NO_ACTIVATION_CKPT=1 \
+#   DATASET=HuggingFaceFW/fineweb CONFIG_NAME=sample-10BT \
+#   NPROC=4 bash scripts/run.sh
 #
 set -euo pipefail
 
@@ -17,6 +24,7 @@ CONFIG="${CONFIG:-config/train_config.json}"
 DATA_DIR="${DATA_DIR:-./training_data/fineweb}"
 COMPILE_FLAG="${COMPILE:+--compile}"
 ACCUMULATE="${ACCUMULATE:-}"
+NO_ACTIVATION_CKPT_FLAG="${NO_ACTIVATION_CKPT:+--no-activation-checkpoint}"
 
 DATASET="${DATASET:-HuggingFaceFW/fineweb}"
 CONFIG_NAME="${CONFIG_NAME:-}"
@@ -53,7 +61,7 @@ fi
 
 echo "==> Launching training (NPROC=${NPROC})..."
 torchrun --standalone --nnodes=1 --nproc_per_node="${NPROC}" \
-    src/train/fsdp_train.py --config "${CONFIG}" ${COMPILE_FLAG} ${ACCUMULATE:+--accumulate "${ACCUMULATE}"}
+    src/train/fsdp_train.py --config "${CONFIG}" ${COMPILE_FLAG} ${ACCUMULATE:+--accumulate "${ACCUMULATE}"} ${NO_ACTIVATION_CKPT_FLAG}
 TRAIN_STATUS=$?
 
 # Wait for the downloader to finish so the script doesn't orphan it.
