@@ -51,6 +51,7 @@ class CheckpointConfig:
     save_every: int = 50
     save_final: bool = True
     keep_last: int = 2              # retain only the most recent N step_* checkpoints
+    first_save_at: int = 500          # first checkpoint step (subsequent cadence = save_every)
 
 
 @dataclass
@@ -128,6 +129,7 @@ def load_train_config(path: str = DEFAULT_CONFIG_PATH) -> TrainConfig:
         save_every=ckpt.get("save_every", CheckpointConfig.save_every),
         save_final=ckpt.get("save_final", CheckpointConfig.save_final),
         keep_last=ckpt.get("keep_last", CheckpointConfig.keep_last),
+        first_save_at=ckpt.get("first_save_at", CheckpointConfig.first_save_at),
     )
 
     prof = cfg.get("profile", {})

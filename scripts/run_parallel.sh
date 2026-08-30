@@ -15,6 +15,8 @@ set -euo pipefail
 NPROC="${NPROC:-4}"
 CONFIG="${CONFIG:-config/train_config.json}"
 DATA_DIR="${DATA_DIR:-./training_data/fineweb}"
+COMPILE_FLAG="${COMPILE:+--compile}"
+ACCUMULATE="${ACCUMULATE:-}"
 
 DATASET="${DATASET:-HuggingFaceFW/fineweb}"
 CONFIG_NAME="${CONFIG_NAME:-}"
@@ -51,7 +53,7 @@ fi
 
 echo "==> Launching training (NPROC=${NPROC})..."
 torchrun --standalone --nnodes=1 --nproc_per_node="${NPROC}" \
-    src/train/fsdp_train.py --config "${CONFIG}"
+    src/train/fsdp_train.py --config "${CONFIG}" ${COMPILE_FLAG} ${ACCUMULATE:+--accumulate "${ACCUMULATE}"}
 TRAIN_STATUS=$?
 
 # Wait for the downloader to finish so the script doesn't orphan it.

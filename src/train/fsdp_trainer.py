@@ -1,5 +1,6 @@
 from __future__ import annotations
 import os
+import time
 import torch
 import torch.distributed as dist
 from torch.distributed.device_mesh import init_device_mesh
@@ -16,8 +17,11 @@ from src.train.dist_dataset_loader import (
 )
 
 class FSDP2Trainer:
-    def __init__(self, profile: bool = False, config_path: str | None = None):
+    def __init__(self, profile: bool = False, config_path: str | None = None, compile_model: bool = False, accumulation_steps: int = 1, activation_checkpoint: bool = True):
         self.profile = profile
+        self.compile_model = compile_model
+        self.accumulation_steps = max(1, accumulation_steps)
+        self.activation_checkpoint = activation_checkpoint
         self.cfg = load_train_config() if config_path is None else load_train_config(config_path)
         self.config = self.cfg.model
         self._trace_dir = self.cfg.profile.trace_dir
@@ -48,9 +52,9 @@ class FSDP2Trainer:
         # bf16 model params on CUDA so AdamW tiers are allocated in bf16, shrinking
         # both VRAM and the on-disk optimizer state.
         if self.isCuda:
-            model = Llama(config=self.config).to(self.device).bfloat16()
+            model = Llama(config=self.config, use_activation_checkpoint=self.activation_checkpoint).to(self.device).bfloat16()
         else:
-            model = Llama(config=self.config).to(self.device)
+            model = Llama(config=self.config, use_activation_checkpoint=self.activation_checkpoint).to(self.device)
 
         embedding_attr = "embedding" if hasattr(model, "embedding") else "tok_embeddings"
         embed_module = getattr(model, embedding_attr, None)
@@ -67,8 +71,15 @@ class FSDP2Trainer:
             if hasattr(model, "output"):
                 fully_shard(model.output, mesh=mesh)
         for llamaBlock in model.blocks:
-            fully_shard(llamaBlock, mesh=mesh)
+            fully_shard(llamaBlock, mesh=mesh, reshard_after_forward=True)
         fully_shard(model, mesh=mesh)
+
+        # Optional torch.compile (opt-in via --compile flag) — wraps the
+        # FSDP-sharded model so the compiler sees the full distributed graph.
+        if self.compile_model and self.isCuda:
+            if self.rank == 0:
+                print("⚡ Enabling torch.compile (mode='reduce-overhead') — expect first-step warmup latency.")
+            model = torch.compile(model, mode="reduce-overhead")
 
         lr = self.cfg.optimizer.lr
         optimizer = torch.optim.AdamW(
@@ -107,6 +118,75 @@ class FSDP2Trainer:
         self.tokenizer = tokenizer
         self.dataset = dataset
         self.dataloader = dataloader
+
+    def _print_training_summary(self):
+        """Print a one-shot training configuration banner (rank 0 only)."""
+        if self.rank != 0:
+            return
+        m = self.cfg.model
+        td = self.cfg.training_data
+        ckpt = self.cfg.checkpoint
+        total_params = sum(p.numel() for p in self.model.parameters())
+        trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+
+        def _yn(b: bool) -> str:
+            return "ON" if b else "OFF"
+
+        device_info = (
+            f"CUDA ({torch.cuda.get_device_name(self.device)})"
+            if self.isCuda
+            else "CPU"
+        )
+
+        lines = [
+            "",
+            "=" * 72,
+            "                    TRAINING RUN SUMMARY",
+            "=" * 72,
+            "",
+            "-- Model --",
+            f"  Architecture           LLaMA (custom)",
+            f"  Parameters             {total_params:,}  ({trainable_params:,} trainable)",
+            f"  Vocab / Embed dim      {m.vocab_size:,} / {m.n_embd}",
+            f"  Blocks / Heads / KV    {m.n_blocks} / {m.n_heads} / {m.n_kv_heads}",
+            f"  Max sequence length    {m.max_seq_len}",
+            "",
+            "-- Training --",
+            f"  Block size (tokens)    {td.block_size}",
+            f"  Batch size / GPU       {td.batch_size}",
+            f"  Effective global batch {td.batch_size * self.world_size * self.accumulation_steps}",
+            f"  Max steps              {self.cfg.training.max_steps}",
+            f"  Learning rate          {self.cfg.optimizer.lr}",
+            f"  Log every N steps      {self.cfg.training.log_every}",
+            "",
+            "-- System --",
+            f"  Device / Backend       {device_info} / {self.backend}",
+            f"  World size (GPUs)      {self.world_size}",
+            f"  Precision               bfloat16 (autocast)",
+            "",
+            "-- Features --",
+            f"  Activation checkpoint  {_yn(self.activation_checkpoint)}",
+            f"  torch.compile          {_yn(self.compile_model)}",
+            f"  Gradient accumulation  {self.accumulation_steps}x",
+            f"  FSDP reshard blocks    {_yn(True)}",
+            "",
+            "-- Data --",
+            f"  Source mode            {td.source_mode}",
+            f"  Data directory         {td.data_dir}",
+            f"  Delete consumed        {_yn(td.delete_consumed)}",
+            "",
+            "-- Checkpoint --",
+            f"  Directory              {ckpt.checkpoint_dir}",
+            f"  First save at step     {ckpt.first_save_at}",
+            f"  Save every N steps     {ckpt.save_every}",
+            f"  Keep last N            {ckpt.keep_last}",
+            f"  Resume from ckpt       {_yn(ckpt.resume)}",
+            "",
+            "=" * 72,
+            "",
+        ]
+        for line in lines:
+            print(line, flush=True)
 
     def _latest_checkpoint_dir(self) -> str | None:
         """Return the highest-numbered ``step_*`` directory under the checkpoint root, if any."""
@@ -176,6 +256,44 @@ class FSDP2Trainer:
             shutil.rmtree(old_dir, ignore_errors=True)
             dist.barrier()
 
+    def _cap_trace_dir(self, max_size_gb: float = 2.0):
+        """Delete oldest ``*.pt.trace.json`` files in ``_trace_dir`` if total exceeds ``max_size_gb``.
+
+        Keeps the most recent profiles so long-running training doesn't silently fill disk.
+        Only rank 0 performs the cleanup; a barrier keeps all ranks aligned afterwards.
+        """
+        if not os.path.isdir(self._trace_dir) or self.rank != 0:
+            return
+        trace_files: list[tuple[float, str]] = []
+        total_bytes = 0
+        for entry in os.listdir(self._trace_dir):
+            if not entry.endswith(".pt.trace.json"):
+                continue
+            full = os.path.join(self._trace_dir, entry)
+            try:
+                st = os.stat(full)
+                trace_files.append((st.st_mtime, full))
+                total_bytes += st.st_size
+            except OSError:
+                continue
+        cap_bytes = int(max_size_gb * 1024 * 1024 * 1024)
+        if total_bytes <= cap_bytes:
+            return
+        trace_files.sort()  # oldest first
+        print(f"[TRACE CAP] Trace dir at {total_bytes / (1024**3):.1f}GB exceeds {max_size_gb}GB cap -- pruning oldest...")
+        for _mtime, path in trace_files:
+            if total_bytes <= cap_bytes:
+                break
+            try:
+                sz = os.path.getsize(path)
+                os.remove(path)
+                total_bytes -= sz
+                print(f"   Deleted {os.path.basename(path)} ({sz / (1024**2):.0f}MB)")
+            except OSError:
+                continue
+        if dist.is_initialized():
+            dist.barrier()
+
     def _forward(self, x, y):
         if self.device.type == "cuda":
             with torch.amp.autocast(device_type='cuda', dtype=torch.bfloat16):
@@ -191,14 +309,14 @@ class FSDP2Trainer:
         self.optimizer.step()
 
     def _train_step(self, x, y):
-        self.optimizer.zero_grad(set_to_none=True) # set_to_none=True saves VRAM cycles
         loss = self._forward(x, y)
+        loss = loss / self.accumulation_steps  # normalize for gradient accumulation
         self._backward(loss)
-        self._optimizer_step()
         return loss
 
     def training_loop(self):
         self._setup()
+        self._print_training_summary()
         prof = None
         
         if self.profile:
@@ -232,31 +350,52 @@ class FSDP2Trainer:
                 x = batch_raw[:, :-1].to(self.device)
                 y = batch_raw[:, 1:].to(self.device).contiguous()
 
+                micro_step = batch_idx  # every batch is a micro-batch in accumulation
+                step_start = time.perf_counter()
+
                 if self.profile:
-                    self.optimizer.zero_grad(set_to_none=True)
+                    if micro_step % self.accumulation_steps == 0:
+                        self.optimizer.zero_grad(set_to_none=True)
                     with record_function("forward_pass"):
                         loss = self._forward(x, y)
+                        loss = loss / self.accumulation_steps
                     with record_function("backward_pass"):
                         self._backward(loss)
                     with record_function("optimizer_step"):
-                        self._optimizer_step()
+                        if (micro_step + 1) % self.accumulation_steps == 0:
+                            self._optimizer_step()
                     if prof is not None:
                         prof.step()
                 else:
+                    if micro_step % self.accumulation_steps == 0:
+                        self.optimizer.zero_grad(set_to_none=True)
                     loss = self._train_step(x, y)
+                    if (micro_step + 1) % self.accumulation_steps == 0:
+                        self._optimizer_step()
 
                 if self.rank == 0 and batch_idx % log_every == 0:
+                    step_ms = (time.perf_counter() - step_start) * 1000
                     prefix = "Profile Step" if self.profile else "Step"
-                    print(f"{prefix} {batch_idx:04d} | Step Loss: {loss.item():.4f}")
+                    if self.isCuda:
+                        peak_mb = torch.cuda.max_memory_allocated(self.device) / (1024 * 1024)
+                        print(f"{prefix} {batch_idx:04d} | Loss: {loss.item():.4f} | Time: {step_ms:.1f}ms | Peak VRAM: {peak_mb:.0f}MB")
+                        torch.cuda.reset_peak_memory_stats(self.device)
+                    else:
+                        print(f"{prefix} {batch_idx:04d} | Loss: {loss.item():.4f} | Time: {step_ms:.1f}ms")
 
                 # Periodic checkpoint save (skipped while profiling)
                 save_every = self.cfg.checkpoint.save_every
-                if (
+                first_save_at = self.cfg.checkpoint.first_save_at
+                do_save = (
                     save_every > 0
                     and batch_idx > 0
-                    and batch_idx % save_every == 0
                     and not self.profile
-                ):
+                    and (
+                        batch_idx == first_save_at
+                        or batch_idx % save_every == 0
+                    )
+                )
+                if do_save:
                     self._save_distributed_checkpoint(step=batch_idx)
 
                 # Stop at training.max_steps (or profile.max_steps when profiling).
@@ -267,11 +406,15 @@ class FSDP2Trainer:
         finally:
             if prof is not None:
                 prof.__exit__(None, None, None)
+                self._cap_trace_dir()
 
             # Final save unless the last step already hit the save cadence
             if not self.profile and self.cfg.checkpoint.save_final and last_step >= 0:
                 save_every = self.cfg.checkpoint.save_every
-                already_saved = save_every > 0 and last_step > 0 and last_step % save_every == 0
+                first_save_at = self.cfg.checkpoint.first_save_at
+                already_saved = save_every > 0 and last_step > 0 and (
+                    last_step == first_save_at or last_step % save_every == 0
+                )
                 if not already_saved:
                     self._save_distributed_checkpoint(step=last_step)
 

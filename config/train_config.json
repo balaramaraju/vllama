@@ -3,8 +3,8 @@
     "hf_path": null,
     "hf_name": null,
     "split": "train",
-    "block_size": 2048,
-    "batch_size": 8,
+    "block_size": 4096,
+    "batch_size": 16,
     "is_local_file": true,
     "tokenizer_path": "./llama_tokenizer_local",
     "wait_for_data": true,
@@ -20,7 +20,7 @@
       "n_blocks": 28,
       "n_heads": 24,
       "n_kv_heads": 8,
-      "max_seq_len": 2048
+      "max_seq_len": 4096
     },
     "optimizer": {
       "lr": 0.0003
@@ -33,9 +33,10 @@
       "checkpoint_dir": "./checkpoints/llama_3b",
       "resume": true,
       "load_from": null,
-      "save_every": 1000,
+      "save_every": 5000,
       "save_final": true,
-      "keep_last": 2
+      "keep_last": 2,
+      "first_save_at": 500
     },
     "profile": {
       "skip_first": 10,

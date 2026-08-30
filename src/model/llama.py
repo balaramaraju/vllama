@@ -116,9 +116,10 @@ class SwiGLUMLP(nn.Module):
 
 
 class Llama(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, use_activation_checkpoint: bool = True):
         super().__init__()
         self.config = config
+        self.use_activation_checkpoint = use_activation_checkpoint
         self.embedding = nn.Embedding(config.vocab_size, config.n_embd)
         self.blocks = nn.ModuleList(LlamaBlock(config) for _ in range(config.n_blocks))
         self.norm = RMSNorm(dim=config.n_embd)
@@ -128,31 +129,31 @@ class Llama(nn.Module):
     def forward(self, tokens: torch.Tensor, targets: Optional[torch.Tensor] = None) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         batch_size, seq_len = tokens.shape
         x = self.embedding(tokens)
-        
+
         mask = torch.full((seq_len, seq_len), float("-inf"), device=tokens.device)
         mask = torch.triu(mask, diagonal=1)
 
-        # ---------------------------------------------------------------------
-        # PERFORMANCE OPTIMIZATION: ACTIVATION CHECKPOINT
-        # Converts keyword parameters to clean positional arguments to satisfy
-        # the use_reentrant=False non-reentrant FSDP2 graph constraint.
-        # ---------------------------------------------------------------------
-        def create_checkpoint_forward(block_layer):
-            def custom_forward(tensor_state, attention_mask):
-                # Unpacks safely inside the localized block frame
-                return block_layer(tensor_state, mask=attention_mask)
-            return custom_forward
+        if self.use_activation_checkpoint:
+            # ACTIVATION CHECKPOINT ENABLED
+            # Drops intermediate activations (SwiGLU, QKV dots) during forward;
+            # recomputes them on-the-fly during backward — trades compute for VRAM.
+            def create_checkpoint_forward(block_layer):
+                def custom_forward(tensor_state, attention_mask):
+                    return block_layer(tensor_state, mask=attention_mask)
+                return custom_forward
 
-        for block in self.blocks:
-            # Drop intermediate activations (SwiGLU, QKV dots) during forward pass;
-            # force on-the-fly recomputation during the backward graph step.
-            x = checkpoint(
-                create_checkpoint_forward(block),
-                x,
-                mask,
-                use_reentrant=False  # Mandatory for FSDP2 tracking integration
-            )
-        # ---------------------------------------------------------------------
+            for block in self.blocks:
+                x = checkpoint(
+                    create_checkpoint_forward(block),
+                    x,
+                    mask,
+                    use_reentrant=False,
+                )
+        else:
+            # STANDARD EAGER EXECUTION (no activation checkpoint)
+            # Higher VRAM usage but faster iteration time — use for speed benchmarks.
+            for block in self.blocks:
+                x = block(x, mask=mask)
 
         x = self.norm(x)
         logits = self.output(x)
