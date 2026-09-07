@@ -12,6 +12,9 @@ Highlights:
   GPUs are done with it** — the data folder self-balances at 2–3 GB.
 - **DCP sharded checkpoints** (model + optimizer), auto-resume of the latest `step_*`,
   pruning to the newest N checkpoints.
+- **Inference with pretrained SmolLM2-360M-Instruct**: a download/convert script maps
+  the Hugging Face weights into the custom Llama layout, and a small generation loop
+  (greedy / temperature / top-k / top-p) runs them on CPU or GPU.
 
 ---
 
@@ -156,6 +159,61 @@ All settings live in `config/train_config.json`:
 
 ---
 
+## Inference with SmolLM2-360M-Instruct
+
+The repo includes a **custom-Llama inference path** for the pretrained
+[`HuggingFaceTB/SmolLM2-360M-Instruct`](https://huggingface.co/HuggingFaceTB/SmolLM2-360M-Instruct)
+model. A single script downloads the weights from Hugging Face, maps them into the
+custom model's layout, saves them locally, and verifies the port against the HF
+reference — then a small generation loop runs them.
+
+### 1. Download + convert the weights
+
+```bash
+# From the repo root. Downloads ~720 MB (bf16 on GPU) / ~1.4 GB (fp32 on CPU),
+# converts into the custom Llama layout, and verifies logits vs the HF reference.
+python src/inference/convert_weights.py \
+    --model-id HuggingFaceTB/SmolLM2-360M-Instruct \
+    --out-dir weights/smol2_360m_instruct
+```
+
+Output under `weights/smol2_360m_instruct/`:
+
+| File | Contents |
+|---|---|
+| `model.safetensors` | Converted weights in the custom `Llama` layout |
+| `config.json` | Architecture constants (vocab, dims, heads, rope theta, …) |
+| `tokenizer/` | SmolLM2 tokenizer, including its chat template |
+
+Precision is chosen automatically: **bf16 on CUDA, fp32 on CPU**. Override with
+`--dtype bf16|fp32`; skip the logit check with `--no-verify`.
+
+### 2. Run inference
+
+```bash
+# Single-shot completion
+python scripts/infer_smol.py --prompt "What is the capital of France?"
+
+# Interactive chat
+python scripts/infer_smol.py --chat
+
+# Tune generation
+python scripts/infer_smol.py --prompt "Tell me a joke" \
+    --max-new-tokens 128 --temperature 0.7 --top-p 0.9
+```
+
+### CPU vs RunPod (GPU)
+
+| Environment | How to run | Notes |
+|---|---|---|
+| **RunPod / GPU** | `python src/inference/convert_weights.py` then `python scripts/infer_smol.py --chat` | Auto **bf16**; ~720 MB weights fits one small GPU |
+| **CPU only** | same two commands | Auto **fp32**; works end-to-end but generation is slow |
+
+> Both commands are identical on CPU and GPU — `convert_weights.py` and
+> `infer_smol.py` auto-detect CUDA and pick the right precision.
+
+---
+
 ## Local CPU smoke test (no GPU, no network)
 
 ```bash
@@ -178,6 +236,7 @@ scripts/
   run.sh                           # single entry: train-only + train+download
   setup_runpod.sh                  # tokenizer + seed data
   prepare_local_test.py          # offline smoke-test assets
+  infer_smol.py                  # SmolLM2-360M-Instruct inference CLI (single-shot / chat)
 src/
   train/fsdp_trainer.py          # FSDP2 trainer
   train/fsdp_train.py            # plain-train entry
@@ -187,6 +246,9 @@ src/
   datautils/download_data.py     # sliding-window HF streamer
   datautils/distributed_checkpoint_manager.py  # DCP save/load
   model/llama.py                 # Llama model (GQA, RoPE, SwiGLU, RMSNorm)
+  inference/smol_config.py       # SmolLM2-360M architecture constants
+  inference/convert_weights.py   # download + convert HF weights + verify
+  inference/generate.py          # sampling + naive autoregressive generate
 ```
 
 ## Requirements

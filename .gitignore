@@ -212,6 +212,7 @@ llama_tokenizer_local/
 fineweb_sample_5k.jsonl
 log/
 config/local_test_config.json
+weights/
 
 # PyPI configuration file
 .pypirc

@@ -8,6 +8,8 @@ class LlamaConfig:
     n_heads: int = 24
     n_kv_heads: int = 8
     max_seq_len: int = 2048
+    rope_theta: float = 10000.0
+    rms_norm_eps: float = 1e-6
 
 
 @dataclass
@@ -18,3 +20,5 @@ class LocalLlamaConfig:
     n_heads: int = 2
     n_kv_heads: int = 1
     max_seq_len: int = 256
+    rope_theta: float = 10000.0
+    rms_norm_eps: float = 1e-6

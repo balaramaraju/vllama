@@ -1,0 +1,37 @@
+{
+  "training_data": {
+    "hf_path": "HuggingFaceFW/fineweb",
+    "hf_name": "sample-10BT",
+    "split": "train",
+    "block_size": 2048,
+    "batch_size": 8,
+    "is_local_file": true,
+    "tokenizer_path": "./llama_tokenizer_local",
+    "wait_for_data": true,
+    "poll_interval": 1.0,
+    "source_mode": "shard_dir",
+    "data_dir": "./training_data/fineweb",
+    "delete_consumed": true
+  },
+  "config": {
+    "model": {
+      "vocab_size": 128256,
+      "n_embd": 1536,
+      "n_blocks": 16,
+      "n_heads": 16,
+      "n_kv_heads": 4,
+      "max_seq_len": 2048
+    },
+    "optimizer": {
+      "lr": 0.0003
+    },
+    "checkpoint": {
+      "checkpoint_dir": "./checkpoints/llama_600m",
+      "resume": true,
+      "load_from": null,
+      "save_every": 500,
+      "save_final": true,
+      "keep_last": 2
+    }
+  }
+}

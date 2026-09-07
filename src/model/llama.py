@@ -19,7 +19,7 @@ class LlamaGroupAttention(nn.Module):
         self.v_proj = nn.Linear(config.n_embd, self.n_kv_heads * self.head_dim, bias=False)
         self.o_proj = nn.Linear(self.n_heads * self.head_dim, config.n_embd, bias=False)
         
-        self.rope = SimpleRoPE(dim=self.head_dim, max_seq_len=config.max_seq_len)
+        self.rope = SimpleRoPE(dim=self.head_dim, max_seq_len=config.max_seq_len, theta=config.rope_theta)
 
     def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         b, s, c = x.shape
@@ -51,8 +51,8 @@ class LlamaBlock(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.attention = LlamaGroupAttention(config=config)
-        self.attention_norm = RMSNorm(dim=config.n_embd)
-        self.ffn_norm = RMSNorm(dim=config.n_embd)
+        self.attention_norm = RMSNorm(dim=config.n_embd, eps=config.rms_norm_eps)
+        self.ffn_norm = RMSNorm(dim=config.n_embd, eps=config.rms_norm_eps)
         self.feed_forward = SwiGLUMLP(config=config)
 
     def forward(self, tokens: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
@@ -122,7 +122,7 @@ class Llama(nn.Module):
         self.use_activation_checkpoint = use_activation_checkpoint
         self.embedding = nn.Embedding(config.vocab_size, config.n_embd)
         self.blocks = nn.ModuleList(LlamaBlock(config) for _ in range(config.n_blocks))
-        self.norm = RMSNorm(dim=config.n_embd)
+        self.norm = RMSNorm(dim=config.n_embd, eps=config.rms_norm_eps)
         self.output = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         self.output.weight = self.embedding.weight
 
@@ -176,6 +176,8 @@ if __name__ == "__main__":
         n_heads = 8
         n_kv_heads = 2
         max_seq_len = 2048
+        rope_theta = 10000.0
+        rms_norm_eps = 1e-6
 
     config = ModelConfig()
     model = Llama(config)
