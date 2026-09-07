@@ -17,7 +17,8 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from src.inference.generate import generate, load_model, load_tokenizer  # noqa: E402
+from src.inference.generate import generate, generate_stream, load_model, load_tokenizer  # noqa: E402
+from src.inference.metrics import ServingPerformanceProfiler, format_metrics  # noqa: E402
 
 
 def _device_and_dtype(device_arg: str):
@@ -75,6 +76,24 @@ def run_chat(args, model, tokenizer, device):
         print("Assistant:", reply)
 
 
+def run_benchmark(args, model, tokenizer, device):
+    input_ids = _chat_input(tokenizer, [{"role": "user", "content": args.prompt}], device)
+    profiler = ServingPerformanceProfiler(device, model=model)
+    stream = generate_stream(
+        model,
+        tokenizer,
+        input_ids,
+        max_new_tokens=args.max_new_tokens,
+        temperature=args.temperature,
+        top_k=args.top_k,
+        top_p=args.top_p,
+    )
+    tokens, metrics = profiler.profile_generation_run(stream)
+    print(format_metrics(metrics))
+    reply = tokenizer.decode(torch.tensor([tokens], dtype=torch.long), skip_special_tokens=True)
+    print("\nResponse:\n", reply)
+
+
 def main():
     parser = argparse.ArgumentParser(description="SmolLM2-360M-Instruct inference on the custom Llama model.")
     parser.add_argument("--model-dir", default=os.path.join("weights", "smol2_360m_instruct"))
@@ -85,6 +104,7 @@ def main():
     parser.add_argument("--top-k", type=int, default=None)
     parser.add_argument("--top-p", type=float, default=0.9)
     parser.add_argument("--device", default="auto")
+    parser.add_argument("--benchmark", action="store_true", help="Profile the run and print inference metrics.")
     args = parser.parse_args()
 
     device, dtype = _device_and_dtype(args.device)
@@ -92,7 +112,11 @@ def main():
     model = load_model(args.model_dir, device, dtype)
     tokenizer = load_tokenizer(args.model_dir)
 
-    if args.chat:
+    if args.benchmark:
+        if not args.prompt:
+            parser.error("--benchmark requires --prompt.")
+        run_benchmark(args, model, tokenizer, device)
+    elif args.chat:
         run_chat(args, model, tokenizer, device)
     elif args.prompt:
         run_single(args, model, tokenizer, device)

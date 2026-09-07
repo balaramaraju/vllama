@@ -8,7 +8,7 @@ later milestone and will slot into :func:`generate`.
 from __future__ import annotations
 
 import os
-from typing import Optional
+from typing import Iterator, Optional
 
 import torch
 from safetensors.torch import load_file
@@ -67,6 +67,47 @@ def sample_token(
     return torch.multinomial(probs, num_samples=1).squeeze(-1)
 
 
+def generate_stream(
+    model: Llama,
+    tokenizer,
+    input_ids: torch.Tensor,
+    max_new_tokens: int = 64,
+    temperature: float = 0.7,
+    top_k: Optional[int] = None,
+    top_p: Optional[float] = 0.9,
+    eos_token_id: Optional[int] = None,
+) -> Iterator[int]:
+    """Yield generated token ids one at a time.
+
+    The first yield is produced by the compute-bound prefill forward over the
+    full prompt; every subsequent yield is one memory-bound decode step. This
+    split is what :class:`ServingPerformanceProfiler` times (TTFT vs ITL).
+    """
+    if eos_token_id is None:
+        eos_token_id = tokenizer.eos_token_id
+    if max_new_tokens <= 0:
+        return
+
+    ids = input_ids.to(next(model.parameters()).device)
+
+    with torch.no_grad():
+        logits, _ = model(ids)
+    next_id = sample_token(logits, temperature, top_k, top_p)
+    ids = torch.cat([ids, next_id.unsqueeze(0)], dim=-1)
+    yield next_id.item()
+    if eos_token_id is not None and next_id.item() == eos_token_id:
+        return
+
+    for _ in range(max_new_tokens - 1):
+        with torch.no_grad():
+            logits, _ = model(ids)
+        next_id = sample_token(logits, temperature, top_k, top_p)
+        ids = torch.cat([ids, next_id.unsqueeze(0)], dim=-1)
+        yield next_id.item()
+        if eos_token_id is not None and next_id.item() == eos_token_id:
+            return
+
+
 def generate(
     model: Llama,
     tokenizer,
@@ -77,16 +118,25 @@ def generate(
     top_p: Optional[float] = 0.9,
     eos_token_id: Optional[int] = None,
 ) -> torch.Tensor:
-    """Greedy/sampled autoregressive decode (naive: full forward each step)."""
-    if eos_token_id is None:
-        eos_token_id = tokenizer.eos_token_id
+    """Greedy/sampled autoregressive decode (naive: full forward each step).
 
-    ids = input_ids.to(next(model.parameters()).device)
-    for _ in range(max_new_tokens):
-        with torch.no_grad():
-            logits, _ = model(ids)
-        next_id = sample_token(logits, temperature, top_k, top_p)
-        ids = torch.cat([ids, next_id.unsqueeze(0)], dim=-1)
-        if eos_token_id is not None and next_id.item() == eos_token_id:
-            break
-    return ids
+    Thin wrapper over :func:`generate_stream` that returns the full id tensor.
+    """
+    device = next(model.parameters()).device
+    base = input_ids.to(device)
+    new_tokens = list(
+        generate_stream(
+            model,
+            tokenizer,
+            input_ids,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_k=top_k,
+            top_p=top_p,
+            eos_token_id=eos_token_id,
+        )
+    )
+    if new_tokens:
+        ext = torch.tensor([new_tokens], dtype=torch.long, device=device)
+        return torch.cat([base, ext], dim=-1)
+    return base

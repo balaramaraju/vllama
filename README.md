@@ -202,6 +202,22 @@ python scripts/infer_smol.py --prompt "Tell me a joke" \
     --max-new-tokens 128 --temperature 0.7 --top-p 0.9
 ```
 
+### 3. Benchmark (measure inference metrics)
+
+Profile one run and print TTFT, inter-token latency (ITL), model bandwidth
+utilization (MBU), throughput, KV-cache efficiency, and peak memory:
+
+```bash
+python scripts/infer_smol.py --prompt "What is the capital of France?" --benchmark
+```
+
+Notes:
+
+- `TTFT` = compute-bound prefill latency; `ITL` = memory-bound decode latency.
+- `MBU` = achieved memory bandwidth / peak hardware bandwidth (the key decode-phase metric).
+- `KV-cache efficiency` reads `0.00%` until the KV-cache / paged-attention sprints (M2/M3).
+- `Peak memory` only populates on CUDA (reads `0.00 MB` on CPU).
+
 ### CPU vs RunPod (GPU)
 
 | Environment | How to run | Notes |
@@ -249,6 +265,7 @@ src/
   inference/smol_config.py       # SmolLM2-360M architecture constants
   inference/convert_weights.py   # download + convert HF weights + verify
   inference/generate.py          # sampling + naive autoregressive generate
+  inference/metrics.py           # TTFT/ITL/MBU/throughput instrumentation
 ```
 
 ## Requirements
