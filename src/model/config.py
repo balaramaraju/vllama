@@ -10,6 +10,10 @@ class LlamaConfig:
     max_seq_len: int = 2048
     rope_theta: float = 10000.0
     rms_norm_eps: float = 1e-6
+    # KV-cache page size (tokens per block). Deliberately distinct from the
+    # dataset "block_size" used in the training configs, which is the per-sample
+    # sequence length and has nothing to do with the page size in paged attention.
+    kv_block_size: int = 16
 
 
 @dataclass

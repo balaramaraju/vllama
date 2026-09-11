@@ -1,6 +1,6 @@
 """Paged KV-cache storage and block allocation for the vllama engine.
 
-This module implements the memory-management half of "paged attention": KV
+This module implements the memory-management of "paged attention": KV
 tensors live in fixed-size blocks (like OS virtual-memory pages) so that
 variable-length sequences don't waste GPU memory on padding. A block manager
 hands out physical blocks to sequences and maps logical token positions to
@@ -240,3 +240,28 @@ class BlockSpaceManager:
             batch_block_tables.append(block_indices + padding)
 
         return torch.tensor(batch_block_tables, dtype=torch.int32, device=self.device)
+
+    def get_cache_efficiency(self, seq_ids: list[int], current_lens: torch.Tensor) -> float:
+        """Return KV-cache memory efficiency as active/allocated tokens (percent).
+
+        ``active_tokens`` is the sum of the sequences' current context lengths;
+        ``allocated_tokens`` is the total physical capacity reserved by their
+        block tables (``len(table) * block_size`` per sequence). A sequence
+        that stopped early (e.g. hit EOS) uses fewer slots than it reserved,
+        so the result is ``active / allocated * 100`` and lives in ``[0, 100]``.
+        """
+        if isinstance(current_lens, torch.Tensor):
+            active_tokens = int(current_lens.sum().item())
+        else:
+            active_tokens = int(sum(current_lens))
+
+        allocated_tokens = 0
+        for seq_id in seq_ids:
+            table = self.block_tables.get(seq_id)
+            if table is None:
+                raise KeyError(f"seq_id {seq_id} has no allocated blocks")
+            allocated_tokens += len(table) * self.block_size
+
+        if allocated_tokens <= 0:
+            return 0.0
+        return active_tokens / allocated_tokens * 100.0

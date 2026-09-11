@@ -18,6 +18,7 @@ SMOL2_360M = {
     "max_seq_len": 8192,
     "rope_theta": 100000.0,
     "rms_norm_eps": 1e-5,
+    "kv_block_size": 16,
 }
 
 DEFAULT_MODEL_ID = "HuggingFaceTB/SmolLM2-360M-Instruct"

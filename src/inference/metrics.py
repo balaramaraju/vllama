@@ -134,13 +134,14 @@ class ServingPerformanceProfiler:
         if self._is_cuda:
             metrics.peak_memory_mb = torch.cuda.max_memory_allocated(self.device) / (1024.0 * 1024.0)
 
-        return tokens, metrics
+        # Overlay telemetry captured by ``generate_stream`` onto the report
+        # (KV-cache efficiency + peak memory stored on the model).
+        if self.model is not None and hasattr(self.model, "profiler_metrics"):
+            pm = self.model.profiler_metrics
+            metrics.kv_cache_efficiency_pct = float(pm.get("kv_cache_efficiency", 0.0))
+            metrics.peak_memory_mb = float(pm.get("peak_memory_mb", metrics.peak_memory_mb))
 
-    @staticmethod
-    def compute_kv_cache_efficiency(active_tokens: int, allocated_tokens: int) -> float:
-        if allocated_tokens <= 0:
-            return 0.0
-        return active_tokens / allocated_tokens * 100.0
+        return tokens, metrics
 
 
 def format_metrics(m: InferenceMetrics) -> str:

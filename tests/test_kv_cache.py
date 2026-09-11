@@ -72,6 +72,23 @@ class TestBlockSpaceManager:
         table = block_manager.get_block_table_tensor([])
         assert table.shape == (0, 0)
 
+    def test_get_cache_efficiency(self, block_manager):
+        block_manager.allocate(seq_id=0, num_tokens=6)  # 2 blocks * 4 = 8 slots
+        eff = block_manager.get_cache_efficiency([0], torch.tensor([4]))
+        assert eff == pytest.approx(4 / 8 * 100.0)
+
+    def test_get_cache_efficiency_multiple_sequences(self):
+        manager = BlockSpaceManager(num_blocks=4, block_size=4)
+        manager.allocate(seq_id=0, num_tokens=4)  # 1 block * 4 = 4 slots
+        manager.allocate(seq_id=1, num_tokens=8)  # 2 blocks * 4 = 8 slots
+        # active = 2 + 6 = 8, allocated = 4 + 8 = 12
+        eff = manager.get_cache_efficiency([0, 1], torch.tensor([2, 6]))
+        assert eff == pytest.approx(8 / 12 * 100.0)
+
+    def test_get_cache_efficiency_missing_sequence(self, block_manager):
+        with pytest.raises(KeyError):
+            block_manager.get_cache_efficiency([0], torch.tensor([1]))
+
 
 class TestKVCacheMemory:
     def _make_cache(self, **kwargs):
