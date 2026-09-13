@@ -1,6 +1,5 @@
-from __future__ import annotations
-
 from enum import Enum
+from typing import Optional
 
 
 class SequenceStatus(Enum):
@@ -15,12 +14,7 @@ class SequenceState(Enum):
 
 
 class Sequence:
-    """A single inference request tracked across prefill and decode phases.
-
-    ``seq_id`` is auto-assigned from a class-level counter so every sequence is
-    guaranteed a unique key for the block manager — callers never have to mint
-    one themselves.
-    """
+    """A single inference request tracked across prefill and decode phases."""
 
     _next_id: int = 0
 
@@ -28,7 +22,7 @@ class Sequence:
         self,
         prompt_token_ids: list[int],
         max_tokens: int,
-        eos_token_id: int | None = None,
+        eos_token_id: Optional[int] = None,
     ):
         self.seq_id = Sequence._next_id
         Sequence._next_id += 1
